@@ -1,1 +1,589 @@
-const SURL='https://tpfpsroceidafratsznm.supabase.co',SKEY='sb_publishable_rIJD3ZlT5M3mHswx0LH9DA_64TLhgM6',sb=supabase.createClient(SURL,SKEY);let user=null,companies=[],clients=[],projects=[],addenda=[],docs=[],companyId='monomo',view='dashboard',editing=null,authMode='login',clientTab='clients';const PHASES=['IPD','DPP','DGD','PZI','PID','PN','Svetovanje','Drugo'],UNITS=['storitev','ura','km'];const DEF={monomo:{id:'monomo',name:'MONOMO arhitekti, d.o.o.',address:'Rakuševa ulica 10',postal:'1000 Ljubljana',tax:'SI27912248',reg:'8584893000',iban:'SI56 0700 0000 4335 020',bank:'G.B., d.d.',city:'Ljubljana',vat_registered:true,email:'info@monomo-arhitekti.si',phone:'+386 40 756 769',website:'www.monomo-arhitekti.si'},flos:{id:'flos',name:'FLOS, d.o.o.',address:'Rakuševa ulica 10',postal:'1000 Ljubljana',tax:'27156494',reg:'7510063000',iban:'SI56 6000 0000 1480 388',bank:'LON, d.d.',city:'Ljubljana',vat_registered:false,email:'',phone:'',website:''}};const $=s=>document.querySelector(s),fmt=n=>new Intl.NumberFormat('sl-SI',{minimumFractionDigits:2,maximumFractionDigits:2}).format(+n||0)+' €',num=v=>+String(v??0).replace(',','.')||0,today=()=>new Date().toISOString().slice(0,10),add=(s,d)=>{let x=new Date(s+'T12:00:00');x.setDate(x.getDate()+d);return x.toISOString().slice(0,10)},days=(a,b)=>Math.round((new Date(b+'T12:00:00')-new Date(a+'T12:00:00'))/864e5),slug=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9]+/g,'-').replace(/^-|-$/g,'').toUpperCase();function company(){return companies.find(x=>x.id===companyId)||companies[0]}function project(id){return projects.find(x=>x.id===id)}function client(id){return clients.find(x=>x.id===id)}function calc(items,mode,reg){let gross=0,discount=0,net=0,vat=0,by={};for(const i of items||[]){let g=num(i.qty)*num(i.price),disc=g*num(i.discount)/100,base=g-disc,r=reg&&mode==='Običajni DDV'?num(i.vat):0,v=base*r/100;gross+=g;discount+=disc;net+=base;vat+=v;by[r]??={base:0,vat:0};by[r].base+=base;by[r].vat+=v}return{gross,discount,net,vat,total:net+vat,by}}function docStatus(d){if(d.status==='Plačano'||d.payment_terms==='Plačano')return'Plačano';if(d.doc_type==='invoice'&&d.status!=='Osnutek'&&d.due_date<today())return'Zapadel';return d.status||'Osnutek'}async function boot(){const{data}=await sb.auth.getUser();user=data.user;if(user)await setup();render();sb.auth.onAuthStateChange(async(_,s)=>{user=s?.user||null;if(user)await setup();render()})}async function setup(){let{data}=await sb.from('companies').select('id');let ids=new Set((data||[]).map(x=>x.id)),rows=Object.values(DEF).filter(x=>!ids.has(x.id)).map(x=>({...x,user_id:user.id}));if(rows.length)await sb.from('companies').insert(rows);for(const d of Object.values(DEF)){let c=(data||[]).find(x=>x.id===d.id);if(c)await sb.from('companies').update({email:d.email,phone:d.phone,website:d.website}).eq('id',d.id).eq('user_id',user.id).is('email',null)}await load()}async function load(){let[a,b,c,d,e]=await Promise.all([sb.from('companies').select('*').order('id'),sb.from('clients').select('*').order('name'),sb.from('projects').select('*').order('project_no'),sb.from('project_addenda').select('*').order('addendum_date'),sb.from('documents').select('*,document_items(*)').order('issue_date',{ascending:false}).order('seq',{ascending:false})]);companies=a.data||[];clients=b.data||[];projects=c.data||[];addenda=d.data||[];docs=(e.data||[]).map(x=>({...x,items:x.document_items||[]}));render()}function shell(inner){let nav=['dashboard:Pregled','invoices:Računi','estimates:Predračuni','stats:Statistika','clients:Naročniki','projects:Projekti','settings:Nastavitve'];return `<div class="app"><aside><div class="brand">▣ <div><b>MONOMO</b><small>RAČUNI</small></div></div>${nav.map(x=>{let[k,l]=x.split(':');return `<button class="nav ${view===k?'on':''}" onclick="go('${k}')">${l}</button>`}).join('')}<hr><button class="primary side" onclick="newDoc('invoice')">+ Nov račun</button><button class="side" onclick="newDoc('estimate')">+ Nov predračun</button></aside><main><header><select onchange="companyId=this.value;render()">${companies.map(c=>`<option value="${c.id}" ${c.id===companyId?'selected':''}>${esc(c.name)}</option>`).join('')}</select><button onclick="logout()">Odjava</button></header>${inner}</main></div>`}function render(){let r=$('#root');if(!user){r.innerHTML=login();return}let inner=view==='dashboard'?dashboard():view==='invoices'?list('invoice'):view==='estimates'?list('estimate'):view==='clients'?clientView():view==='projects'?projectView():view==='stats'?stats():view==='settings'?settings():editor();r.innerHTML=shell(inner)}function login(){return `<div class="login"><div class="loginCard"><div class="brand">▣ <div><b>MONOMO</b><small>RAČUNI</small></div></div><h1>${authMode==='login'?'Prijava':'Ustvari dostop'}</h1><p class="muted">Zasebna spletna aplikacija za MONOMO in FLOS.</p><label>E-pošta<input id="email" type="email"></label><label>Geslo<input id="pass" type="password"></label><div id="authmsg"></div><button class="primary" onclick="auth()">${authMode==='login'?'Prijavi se':'Ustvari račun'}</button><button onclick="authMode=authMode==='login'?'signup':'login';render()">${authMode==='login'?'Prvič tukaj? Ustvari dostop':'Nazaj na prijavo'}</button><p class="privacy">Brez oglasov in brez analitike. Poslovni podatki so dostopni samo prijavljenemu uporabniku.</p></div></div>`}async function auth(){let e=$('#email').value,p=$('#pass').value,m=$('#authmsg');if(p.length<8){m.innerHTML='<div class="msg err">Geslo naj ima vsaj 8 znakov.</div>';return}let res=authMode==='login'?await sb.auth.signInWithPassword({email:e,password:p}):await sb.auth.signUp({email:e,password:p,options:{emailRedirectTo:location.origin}});if(res.error)m.innerHTML=`<div class="msg err">${esc(res.error.message)}</div>`;else if(authMode==='signup')m.innerHTML='<div class="msg ok">Preveri e-pošto in potrdi naslov, nato se prijavi.</div>'}async function logout(){await sb.auth.signOut();user=null;render()}function go(v){view=v;editing=null;render()}function dashboard(){let inv=docs.filter(d=>d.company_id===companyId&&d.doc_type==='invoice'),est=docs.filter(d=>d.company_id===companyId&&d.doc_type==='estimate'),p=0,o=0,z=0,c=company();for(let d of inv){let t=calc(d.items,d.vat_mode,c.vat_registered).total,st=docStatus(d);st==='Plačano'?p+=t:o+=t;if(st==='Zapadel')z+=t}return `<h1>Pregled</h1><p class="muted">Hiter pregled poslovanja.</p><div class="cards">${metric('Izdani računi',inv.length)}${metric('Predračuni',est.length)}${metric('Plačano',fmt(p))}${metric('Odprto',fmt(o))}${metric('Zapadlo',fmt(z))}</div><h2>Zadnji računi</h2>${table(inv.slice(0,7),false)}`}function metric(l,v){return `<div class="metric"><span>${l}</span><b>${v}</b></div>`}function table(arr,actions=true){let c=company();return `<div class="table"><div class="tr head"><span>Št.</span><span>Naročnik</span><span>Datum</span><span>Znesek</span><span>Status / dejanja</span></div>${arr.map(d=>{let st=docStatus(d);return `<div class="tr"><button class="textbtn" onclick="openDoc('${d.id}')">${d.number}</button><span>${esc(client(d.client_id)?.name||'')}</span><span>${d.issue_date}</span><span>${fmt(calc(d.items,d.vat_mode,c.vat_registered).total)}</span><span class="actions"><span class="status ${st==='Plačano'?'paid':st==='Zapadel'?'overdue':''}">${st}</span>${d.pdf_path?`<button onclick="pdfLink('${d.id}',0)">PDF</button><button onclick="pdfLink('${d.id}',1)">Prenesi</button>`:''}${actions?`<button onclick="duplicateDoc('${d.id}')">Podvoji</button>`:''}${actions&&d.doc_type==='invoice'?`<button onclick="paid('${d.id}')">${st==='Plačano'?'Odpri':'Plačano'}</button>`:''}${actions&&d.doc_type==='estimate'?`<button onclick="convertDoc('${d.id}')">Pretvori</button>`:''}</span></div>`}).join('')}</div>`}function list(type){let a=docs.filter(d=>d.company_id===companyId&&d.doc_type===type);return `<h1>${type==='invoice'?'Računi':'Predračuni'}</h1><div class="filters"><label>Iskanje<input id="ls" placeholder="št., naročnik, projekt" oninput="filterList('${type}')"></label><label>Status<select id="lst" onchange="filterList('${type}')"><option value="all">Vsi</option><option>Osnutek</option><option>Izdano</option><option>Plačano</option><option>Zapadel</option></select></label></div><div id="listbox">${table(a,true)}</div>`}function filterList(type){let q=($('#ls').value||'').toLowerCase(),st=$('#lst').value,c=company(),a=docs.filter(d=>d.company_id===companyId&&d.doc_type===type).filter(d=>{let cl=client(d.client_id),pr=project(d.project_id),hay=[d.number,cl?.name,pr?.project_no,pr?.name].join(' ').toLowerCase();return(!q||hay.includes(q))&&(st==='all'||docStatus(d)===st)});$('#listbox').innerHTML=table(a,true)}function openDoc(id){editing=structuredClone(docs.find(d=>d.id===id));editing.payment_terms ||= editing.status==='Plačano'?'Plačano':'Plačilo po valuti';editing.prepared_by ||= 'Mia Crnič';editing.purpose_code ||= 'OTHR';view='editor';render()}async function paid(id){let d=docs.find(x=>x.id===id),pay=docStatus(d)!=='Plačano';await sb.from('documents').update({status:pay?'Plačano':'Izdano',payment_terms:pay?'Plačano':'Plačilo po valuti'}).eq('id',id);await load()}async function pdfLink(id,download){let d=docs.find(x=>x.id===id);if(!d.pdf_path)return;let filename=pdfFilename(d);let{data,error}=await sb.storage.from('documents').createSignedUrl(d.pdf_path,60,{download:download?filename:false});if(error)alert(error.message);else window.open(data.signedUrl,'_blank')}
+const SURL='https://tpfpsroceidafratsznm.supabase.co',SKEY='sb_publishable_rIJD3ZlT5M3mHswx0LH9DA_64TLhgM6',sb=supabase.createClient(SURL,SKEY);
+
+let user=null,
+    companies=[],
+    clients=[],
+    projects=[],
+    addenda=[],
+    feeItems=[],
+    docs=[],
+    companyId='monomo',
+    view='dashboard',
+    editing=null,
+    authMode='login',
+    clientTab='clients';
+
+const OBJECT_PHASES=['UP','IDP','DPP','DGD','PID','PN','Svetovanje'],
+      INTERIOR_PHASES=['IDP','PZI','PN','Svetovanje'],
+      PHASES=[...new Set([...OBJECT_PHASES,...INTERIOR_PHASES])],
+      UNITS=['storitev','ura','km'];
+
+const DEF={
+  monomo:{
+    id:'monomo',
+    name:'MONOMO arhitekti, d.o.o.',
+    address:'Rakuševa ulica 10',
+    postal:'1000 Ljubljana',
+    tax:'SI27912248',
+    reg:'8584893000',
+    iban:'SI56 0700 0000 4335 020',
+    bank:'G.B., d.d.',
+    city:'Ljubljana',
+    vat_registered:true,
+    email:'info@monomo-arhitekti.si',
+    phone:'+386 40 756 769',
+    website:'www.monomo-arhitekti.si'
+  },
+  flos:{
+    id:'flos',
+    name:'FLOS, d.o.o.',
+    address:'Rakuševa ulica 10',
+    postal:'1000 Ljubljana',
+    tax:'27156494',
+    reg:'7510063000',
+    iban:'SI56 6000 0000 1480 388',
+    bank:'LON, d.d.',
+    city:'Ljubljana',
+    vat_registered:false,
+    email:'',
+    phone:'',
+    website:''
+  }
+};
+
+const $=s=>document.querySelector(s),
+      fmt=n=>new Intl.NumberFormat('sl-SI',{minimumFractionDigits:2,maximumFractionDigits:2}).format(+n||0)+' €',
+      num=v=>+String(v??0).replace(',','.')||0,
+      today=()=>new Date().toISOString().slice(0,10),
+      add=(s,d)=>{
+        let x=new Date(s+'T12:00:00');
+        x.setDate(x.getDate()+d);
+        return x.toISOString().slice(0,10)
+      },
+      days=(a,b)=>Math.round((new Date(b+'T12:00:00')-new Date(a+'T12:00:00'))/864e5),
+      slug=s=>String(s||'')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g,'')
+        .replace(/[^a-zA-Z0-9]+/g,'-')
+        .replace(/^-|-$/g,'')
+        .toUpperCase();
+
+function company(){
+  return companies.find(x=>x.id===companyId)||companies[0]
+}
+
+function project(id){
+  return projects.find(x=>x.id===id)
+}
+
+function client(id){
+  return clients.find(x=>x.id===id)
+}
+
+function calc(items,mode,reg){
+  let gross=0,discount=0,net=0,vat=0,by={};
+
+  for(const i of items||[]){
+    let g=num(i.qty)*num(i.price),
+        disc=g*num(i.discount)/100,
+        base=g-disc,
+        r=reg&&mode==='Običajni DDV'?num(i.vat):0,
+        v=base*r/100;
+
+    gross+=g;
+    discount+=disc;
+    net+=base;
+    vat+=v;
+
+    by[r]??={base:0,vat:0};
+    by[r].base+=base;
+    by[r].vat+=v
+  }
+
+  return{
+    gross,
+    discount,
+    net,
+    vat,
+    total:net+vat,
+    by
+  }
+}
+
+function docStatus(d){
+  if(d.status==='Plačano'||d.payment_terms==='Plačano')return'Plačano';
+  if(d.doc_type==='invoice'&&d.status!=='Osnutek'&&d.due_date<today())return'Zapadel';
+  return d.status||'Osnutek'
+}
+
+async function boot(){
+  const{data}=await sb.auth.getUser();
+  user=data.user;
+
+  if(user)await setup();
+
+  render();
+
+  sb.auth.onAuthStateChange(async(_,s)=>{
+    user=s?.user||null;
+    if(user)await setup();
+    render()
+  })
+}
+
+async function setup(){
+  let{data}=await sb.from('companies').select('id');
+
+  let ids=new Set((data||[]).map(x=>x.id)),
+      rows=Object.values(DEF)
+        .filter(x=>!ids.has(x.id))
+        .map(x=>({...x,user_id:user.id}));
+
+  if(rows.length){
+    await sb.from('companies').insert(rows)
+  }
+
+  for(const d of Object.values(DEF)){
+    let c=(data||[]).find(x=>x.id===d.id);
+
+    if(c){
+      await sb.from('companies')
+        .update({
+          email:d.email,
+          phone:d.phone,
+          website:d.website
+        })
+        .eq('id',d.id)
+        .eq('user_id',user.id)
+        .is('email',null)
+    }
+  }
+
+  await load()
+}
+
+async function load(){
+  let[a,b,c,d,e,f]=await Promise.all([
+    sb.from('companies').select('*').order('id'),
+    sb.from('clients').select('*').order('name'),
+    sb.from('projects').select('*').order('project_no'),
+    sb.from('project_addenda').select('*').order('addendum_date'),
+    sb.from('project_fee_items').select('*').order('sort_order'),
+    sb.from('documents')
+      .select('*,document_items(*)')
+      .order('issue_date',{ascending:false})
+      .order('seq',{ascending:false})
+  ]);
+
+  companies=a.data||[];
+  clients=b.data||[];
+  projects=c.data||[];
+  addenda=d.data||[];
+  feeItems=e.data||[];
+
+  docs=(f.data||[]).map(x=>({
+    ...x,
+    items:x.document_items||[]
+  }));
+
+  render()
+}
+
+function shell(inner){
+  let nav=[
+    'dashboard:Pregled',
+    'invoices:Računi',
+    'estimates:Predračuni',
+    'stats:Statistika',
+    'clients:Naročniki',
+    'projects:Projekti',
+    'settings:Nastavitve'
+  ];
+
+  return `<div class="app">
+    <aside>
+      <div class="brand">
+        ▣
+        <div>
+          <b>MONOMO</b>
+          <small>RAČUNI</small>
+        </div>
+      </div>
+
+      ${nav.map(x=>{
+        let[k,l]=x.split(':');
+
+        return `<button
+          class="nav ${view===k?'on':''}"
+          onclick="go('${k}')"
+        >${l}</button>`
+      }).join('')}
+
+      <hr>
+
+      <button
+        class="primary side"
+        onclick="newDoc('invoice')"
+      >+ Nov račun</button>
+
+      <button
+        class="side"
+        onclick="newDoc('estimate')"
+      >+ Nov predračun</button>
+    </aside>
+
+    <main>
+      <header>
+        <select onchange="companyId=this.value;render()">
+          ${companies.map(c=>`
+            <option
+              value="${c.id}"
+              ${c.id===companyId?'selected':''}
+            >${esc(c.name)}</option>
+          `).join('')}
+        </select>
+
+        <button onclick="logout()">Odjava</button>
+      </header>
+
+      ${inner}
+    </main>
+  </div>`
+}
+
+function render(){
+  let r=$('#root');
+
+  if(!user){
+    r.innerHTML=login();
+    return
+  }
+
+  let inner=
+    view==='dashboard'?dashboard():
+    view==='invoices'?list('invoice'):
+    view==='estimates'?list('estimate'):
+    view==='clients'?clientView():
+    view==='projects'?projectView():
+    view==='stats'?stats():
+    view==='settings'?settings():
+    editor();
+
+  r.innerHTML=shell(inner)
+}
+
+function login(){
+  return `<div class="login">
+    <div class="loginCard">
+
+      <div class="brand">
+        ▣
+        <div>
+          <b>MONOMO</b>
+          <small>RAČUNI</small>
+        </div>
+      </div>
+
+      <h1>${authMode==='login'?'Prijava':'Ustvari dostop'}</h1>
+
+      <p class="muted">
+        Zasebna spletna aplikacija za MONOMO in FLOS.
+      </p>
+
+      <label>
+        E-pošta
+        <input id="email" type="email">
+      </label>
+
+      <label>
+        Geslo
+        <input id="pass" type="password">
+      </label>
+
+      <div id="authmsg"></div>
+
+      <button class="primary" onclick="auth()">
+        ${authMode==='login'?'Prijavi se':'Ustvari račun'}
+      </button>
+
+      <button onclick="authMode=authMode==='login'?'signup':'login';render()">
+        ${authMode==='login'?'Prvič tukaj? Ustvari dostop':'Nazaj na prijavo'}
+      </button>
+
+      <p class="privacy">
+        Brez oglasov in brez analitike.
+        Poslovni podatki so dostopni samo prijavljenemu uporabniku.
+      </p>
+    </div>
+  </div>`
+}
+
+async function auth(){
+  let e=$('#email').value,
+      p=$('#pass').value,
+      m=$('#authmsg');
+
+  if(p.length<8){
+    m.innerHTML='<div class="msg err">Geslo naj ima vsaj 8 znakov.</div>';
+    return
+  }
+
+  let res=authMode==='login'
+    ?await sb.auth.signInWithPassword({
+      email:e,
+      password:p
+    })
+    :await sb.auth.signUp({
+      email:e,
+      password:p,
+      options:{
+        emailRedirectTo:location.origin
+      }
+    });
+
+  if(res.error){
+    m.innerHTML=`<div class="msg err">${esc(res.error.message)}</div>`
+  }else if(authMode==='signup'){
+    m.innerHTML='<div class="msg ok">Preveri e-pošto in potrdi naslov, nato se prijavi.</div>'
+  }
+}
+
+async function logout(){
+  await sb.auth.signOut();
+  user=null;
+  render()
+}
+
+function go(v){
+  view=v;
+  editing=null;
+  render()
+}
+
+function dashboard(){
+  let inv=docs.filter(d=>d.company_id===companyId&&d.doc_type==='invoice'),
+      est=docs.filter(d=>d.company_id===companyId&&d.doc_type==='estimate'),
+      p=0,
+      o=0,
+      z=0,
+      c=company();
+
+  for(let d of inv){
+    let t=calc(d.items,d.vat_mode,c.vat_registered).total,
+        st=docStatus(d);
+
+    st==='Plačano'?p+=t:o+=t;
+
+    if(st==='Zapadel'){
+      z+=t
+    }
+  }
+
+  return `<h1>Pregled</h1>
+
+  <p class="muted">
+    Hiter pregled poslovanja.
+  </p>
+
+  <div class="cards">
+    ${metric('Izdani računi',inv.length)}
+    ${metric('Predračuni',est.length)}
+    ${metric('Plačano',fmt(p))}
+    ${metric('Odprto',fmt(o))}
+    ${metric('Zapadlo',fmt(z))}
+  </div>
+
+  <h2>Zadnji računi</h2>
+
+  ${table(inv.slice(0,7),false)}`
+}
+
+function metric(l,v){
+  return `<div class="metric">
+    <span>${l}</span>
+    <b>${v}</b>
+  </div>`
+}
+
+function table(arr,actions=true){
+  let c=company();
+
+  return `<div class="table">
+
+    <div class="tr head">
+      <span>Št.</span>
+      <span>Naročnik</span>
+      <span>Datum</span>
+      <span>Znesek</span>
+      <span>Status / dejanja</span>
+    </div>
+
+    ${arr.map(d=>{
+      let st=docStatus(d);
+
+      return `<div class="tr">
+
+        <button
+          class="textbtn"
+          onclick="openDoc('${d.id}')"
+        >${d.number}</button>
+
+        <span>
+          ${esc(client(d.client_id)?.name||'')}
+        </span>
+
+        <span>
+          ${d.issue_date}
+        </span>
+
+        <span>
+          ${fmt(calc(d.items,d.vat_mode,c.vat_registered).total)}
+        </span>
+
+        <span class="actions">
+
+          <span class="status ${st==='Plačano'?'paid':st==='Zapadel'?'overdue':''}">
+            ${st}
+          </span>
+
+          ${d.pdf_path?`
+            <button onclick="pdfLink('${d.id}',0)">PDF</button>
+            <button onclick="pdfLink('${d.id}',1)">Prenesi</button>
+          `:''}
+
+          ${actions?`
+            <button onclick="duplicateDoc('${d.id}')">Podvoji</button>
+          `:''}
+
+          ${actions&&d.doc_type==='invoice'?`
+            <button onclick="paid('${d.id}')">
+              ${st==='Plačano'?'Odpri':'Plačano'}
+            </button>
+          `:''}
+
+          ${actions&&d.doc_type==='estimate'?`
+            <button onclick="convertDoc('${d.id}')">Pretvori</button>
+          `:''}
+
+        </span>
+
+      </div>`
+    }).join('')}
+
+  </div>`
+}
+
+function list(type){
+  let a=docs.filter(
+    d=>d.company_id===companyId&&d.doc_type===type
+  );
+
+  return `<h1>${type==='invoice'?'Računi':'Predračuni'}</h1>
+
+  <div class="filters">
+
+    <label>
+      Iskanje
+      <input
+        id="ls"
+        placeholder="št., naročnik, projekt"
+        oninput="filterList('${type}')"
+      >
+    </label>
+
+    <label>
+      Status
+      <select id="lst" onchange="filterList('${type}')">
+        <option value="all">Vsi</option>
+        <option>Osnutek</option>
+        <option>Izdano</option>
+        <option>Plačano</option>
+        <option>Zapadel</option>
+      </select>
+    </label>
+
+  </div>
+
+  <div id="listbox">
+    ${table(a,true)}
+  </div>`
+}
+
+function filterList(type){
+  let q=($('#ls').value||'').toLowerCase(),
+      st=$('#lst').value,
+      c=company(),
+      a=docs
+        .filter(d=>d.company_id===companyId&&d.doc_type===type)
+        .filter(d=>{
+          let cl=client(d.client_id),
+              pr=project(d.project_id),
+              hay=[
+                d.number,
+                cl?.name,
+                pr?.project_no,
+                pr?.name
+              ].join(' ').toLowerCase();
+
+          return(!q||hay.includes(q))&&
+                (st==='all'||docStatus(d)===st)
+        });
+
+  $('#listbox').innerHTML=table(a,true)
+}
+
+function openDoc(id){
+  editing=structuredClone(
+    docs.find(d=>d.id===id)
+  );
+
+  editing.payment_terms||=
+    editing.status==='Plačano'
+      ?'Plačano'
+      :'Plačilo po valuti';
+
+  editing.prepared_by||='Mia Crnič';
+  editing.purpose_code||='OTHR';
+
+  view='editor';
+
+  render()
+}
+
+async function paid(id){
+  let d=docs.find(x=>x.id===id),
+      pay=docStatus(d)!=='Plačano';
+
+  await sb.from('documents')
+    .update({
+      status:pay?'Plačano':'Izdano',
+      payment_terms:pay?'Plačano':'Plačilo po valuti'
+    })
+    .eq('id',id);
+
+  await load()
+}
+
+async function pdfLink(id,download){
+  let d=docs.find(x=>x.id===id);
+
+  if(!d.pdf_path)return;
+
+  let filename=pdfFilename(d);
+
+  let{data,error}=await sb.storage
+    .from('documents')
+    .createSignedUrl(
+      d.pdf_path,
+      60,
+      {
+        download:download?filename:false
+      }
+    );
+
+  if(error){
+    alert(error.message)
+  }else{
+    window.open(data.signedUrl,'_blank')
+  }
+}
