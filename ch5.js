@@ -1,6 +1,5 @@
 let pdfFontsLoaded=false;async function loadPdfFonts(pdf){if(pdfFontsLoaded)return;async function addFont(url,name,style){let r=await fetch(url),b=new Uint8Array(await r.arrayBuffer()),bin='';for(let i=0;i<b.length;i+=0x8000)bin+=String.fromCharCode(...b.subarray(i,i+0x8000));pdf.addFileToVFS(name+'.ttf',btoa(bin));pdf.addFont(name+'.ttf','NotoSans',style)}await addFont('https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf','NotoSans-Regular','normal');await addFont('https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Bold.ttf','NotoSans-Bold','bold');pdfFontsLoaded=true}async function loadBrandFont(pdf){
-  const path=company()?.brand_font_path;
-  if(!path)return false;
+  const path=`${user.id}/assets/${companyId}/brand-twcen-bold.ttf`;
   const {data,error}=await sb.storage.from('documents').createSignedUrl(path,90);
   if(error||!data?.signedUrl)return false;
   const response=await fetch(data.signedUrl);
