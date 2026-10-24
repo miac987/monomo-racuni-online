@@ -112,7 +112,7 @@ function calc(items,mode,reg){
 
 function docStatus(d){
   if(d.status==='Plačano'||d.payment_terms==='Plačano')return'Plačano';
-  if(d.doc_type==='invoice'&&d.status!=='Osnutek'&&d.due_date<today())return'Zapadel';
+  if(d.doc_type==='invoice'&&d.status!=='Osnutek'&&d.due_date&&d.due_date<today())return'Zapadel';
   return d.status||'Osnutek'
 }
 
@@ -553,6 +553,7 @@ function openDoc(id){
 async function paid(id){
   const d=docs.find(x=>x.id===id);
   if(!d||d.status==='Osnutek')return;
+  if(!confirm(docStatus(d)==='Plačano'?'Označim dokument kot neplačan?':'Označim dokument kot plačan?'))return;
   const pay=docStatus(d)!=='Plačano';
   const {error}=await sb.from('documents').update({
     status:pay?'Plačano':'Izdano',
