@@ -455,9 +455,9 @@ function table(arr,actions=true){
             <button onclick="duplicateDoc('${d.id}')">Podvoji</button>
           `:''}
 
-          ${actions&&d.doc_type==='invoice'?`
+          ${actions&&d.status!=='Osnutek'?`
             <button onclick="paid('${d.id}')">
-              ${st==='Plačano'?'Odpri':'Plačano'}
+              ${st==='Plačano'?'Neplačano':'Plačano'}
             </button>
           `:''}
 
@@ -551,16 +551,14 @@ function openDoc(id){
 }
 
 async function paid(id){
-  let d=docs.find(x=>x.id===id),
-      pay=docStatus(d)!=='Plačano';
-
-  await sb.from('documents')
-    .update({
-      status:pay?'Plačano':'Izdano',
-      payment_terms:pay?'Plačano':'Plačilo po valuti'
-    })
-    .eq('id',id);
-
+  const d=docs.find(x=>x.id===id);
+  if(!d||d.status==='Osnutek')return;
+  const pay=docStatus(d)!=='Plačano';
+  const {error}=await sb.from('documents').update({
+    status:pay?'Plačano':'Izdano',
+    payment_terms:pay?'Plačano':'Plačilo po valuti'
+  }).eq('id',id).eq('user_id',user.id);
+  if(error){alert('Statusa plačila ni bilo mogoče shraniti: '+error.message);return}
   await load()
 }
 
